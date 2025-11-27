@@ -16,12 +16,12 @@ jobs:
       id-token: write
       packages: write
     steps:
-      - uses: vexxhost/docker-atmosphere/.github/actions/checkout@main
+      - uses: vexxhost/docker-atmosphere/.github/actions/checkout@2023.2
         with:
           repository: openstack/cinder
-          ref: d9a7d06907d7e3b21fc08d5311a69aa1e4bff951
+          ref: 2023.2-eol
 
-      - uses: vexxhost/docker-atmosphere/.github/actions/build-image@main
+      - uses: vexxhost/docker-atmosphere/.github/actions/build-image@2023.2
         with:
           image-name: cinder
           build-contexts: cinder=openstack/cinder
