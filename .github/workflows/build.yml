@@ -20,7 +20,7 @@ jobs:
       - uses: vexxhost/docker-atmosphere/.github/actions/checkout@main
         with:
           repository: openstack/cinder
-          ref: cf7a00aba514805afe77380fd5690ce246976ce8 # master
+          ref: f5905f5ff78cb943518e133783295833c14f27d0 # master
 
       - uses: vexxhost/docker-atmosphere/.github/actions/build-image@main
         with:
