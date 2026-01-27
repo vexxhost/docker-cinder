@@ -6,7 +6,7 @@ RUN --mount=type=bind,from=cinder,source=/,target=/src/cinder,readwrite <<EOF ba
 uv pip install \
     --constraint /upper-constraints.txt \
         /src/cinder \
-        purestorage \
+        py-pure-client \
         python-3parclient \
         storpool \
         storpool.spopenstack
