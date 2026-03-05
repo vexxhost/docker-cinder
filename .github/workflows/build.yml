@@ -8,6 +8,9 @@ on:
       - main
       - stable/**
 
+permissions:
+  contents: read
+
 jobs:
   image:
     runs-on: ubuntu-latest
@@ -17,12 +20,17 @@ jobs:
       packages: write
       pull-requests: write
     steps:
-      - uses: vexxhost/docker-atmosphere/.github/actions/checkout@main
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: audit
+
+      - uses: vexxhost/docker-atmosphere/.github/actions/checkout@672cf56c8b828e444b6e7906d0ee355c7ec1dea9 # main
         with:
           repository: openstack/cinder
           ref: 030bde83b3fd55e5055d07d9a6e8539978fbd7a2 # master
 
-      - uses: vexxhost/docker-atmosphere/.github/actions/build-image@main
+      - uses: vexxhost/docker-atmosphere/.github/actions/build-image@672cf56c8b828e444b6e7906d0ee355c7ec1dea9 # main
         with:
           image-name: cinder
           build-contexts: cinder=openstack/cinder
