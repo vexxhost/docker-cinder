@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: © 2025 VEXXHOST, Inc.
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-FROM ghcr.io/vexxhost/openstack-venv-builder:2025.1@sha256:302a5b36d591ac4ca5a1fd853969eafd3127aea1b23ac1cee61a71ed194ca2c1 AS build
+FROM ghcr.io/vexxhost/openstack-venv-builder:2025.1@sha256:211e13e01ea604d358a4e23b3aeb250a98c0088b91398e1406ff6341727a7ac7 AS build
 RUN --mount=type=bind,from=cinder,source=/,target=/src/cinder,readwrite <<EOF bash -xe
 uv pip install \
     --constraint /upper-constraints.txt \
@@ -18,7 +18,7 @@ ADD --chmod=644 \
     https://github.com/storpool/storpool-openstack-integration/raw/master/drivers/os_brick/openstack/caracal/storpool.py \
     /var/lib/openstack/lib/python3.12/site-packages/os_brick/initiator/connectors/storpool.py
 
-FROM ghcr.io/vexxhost/python-base:2025.1@sha256:f12f388f1dacaccfb67eed6188fa2f2087081fe795ed11de3862d0fc9e9062c3
+FROM ghcr.io/vexxhost/python-base:2025.1@sha256:c321b082fc5f81688a9e94c06deabddf35c6303193538bba73f160b305e81213
 RUN \
     groupadd -g 42424 cinder && \
     useradd -u 42424 -g 42424 -M -d /var/lib/cinder -s /usr/sbin/nologin -c "Cinder User" cinder && \
