@@ -1,30 +1,29 @@
-From 632adb8e2bc326c7995d6bd6b0eb4a14c48c756f Mon Sep 17 00:00:00 2001
+From c896b7606c2e0f78f40f0a686dec9b896f091f1a Mon Sep 17 00:00:00 2001
 From: Yaguang Tang <heut2008@gmail.com>
 Date: Tue, 12 May 2026 10:58:08 +0800
-Subject: [PATCH] Fix Nimble multipath target portal selection
-
-Closes-bug: #2152223
+Subject: [PATCH] Fix: HPE Nimble driver multipath target portal selection
 
 When nimble_subnet_label matched a specific subnet, _get_data_ips
 returned after the first matching NIC, so only one target portal from
 that subnet was exposed even when additional portal IPs were available.
 The method also only inspected array_list[0], which excluded matching
-portals from additional arrays.
+portals from additional arrays,which makes the multipath for LUN missing
+available target portal IPs in a multi array HA deployment.
 
-Extend subnet label handling so nimble_subnet_label may also contain a
-comma-separated list of labels. The driver now matches every configured
-label across all arrays, preserves wildcard behavior, and chooses the
-first configured matching discovery IP when creating provider
-locations.
+This patch extend subnet label handling so nimble_subnet_label may also
+contain a comma-separated list of labels. The driver now matches every
+configured label across all arrays, preserves wildcard behavior, and
+chooses the first configured matching discovery IP when creating
+provider locations.
 
 Add unit tests covering repeated-label parsing, multiple-label portal
-aggregation, discovery IP selection, and initialize_connection
-returning all target portals for group-scoped targets. Add a reno note
-covering the portal aggregation fix and comma-separated label support.
+aggregation, discovery IP selection, and initialize_connection returning
+all target portals for group-scoped targets. Add a reno note covering
+the portal aggregation fix and comma-separated label support.
 
+Closes-bug: #2152223
 Change-Id: I79a9de959ca40dcda545b140867cd5079f48b221
 Signed-off-by: Yaguang Tang <heut2008@gmail.com>
-Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
 ---
  .../unit/volume/drivers/hpe/test_nimble.py    | 215 ++++++++++++++++++
  cinder/volume/drivers/hpe/nimble.py           |  85 ++++---
@@ -419,5 +418,5 @@ index 000000000..91440fb12
 +    from every matching data subnet while preserving single-label and wildcard
 +    behavior.
 -- 
-2.50.1 (Apple Git-155)
+2.53.0
 
