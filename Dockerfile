@@ -18,7 +18,7 @@ ADD --chmod=644 \
     https://github.com/storpool/storpool-openstack-integration/raw/master/drivers/os_brick/openstack/caracal/storpool.py \
     /var/lib/openstack/lib/python3.12/site-packages/os_brick/initiator/connectors/storpool.py
 
-FROM ghcr.io/vexxhost/python-base:main@sha256:db84eb684023891a9e89087b8cf47a6b628ab6161c797bbac50c8b8979ed1492
+FROM ghcr.io/vexxhost/python-base:main@sha256:efdb78b8902159208d356c4430eb78b012917d2623ea056aaba0935dd8ba54fd
 RUN \
     groupadd -g 42424 cinder && \
     useradd -u 42424 -g 42424 -M -d /var/lib/cinder -s /usr/sbin/nologin -c "Cinder User" cinder && \
