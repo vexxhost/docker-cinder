@@ -17,12 +17,12 @@ jobs:
       packages: write
       pull-requests: write
     steps:
-      - uses: vexxhost/docker-atmosphere/.github/actions/checkout@ee412cafe33e0d7d8b3bc7d0ca64c9f155e293c7 # main
+      - uses: vexxhost/docker-atmosphere/.github/actions/checkout@f9beb2976a2cbd2b83f7d49b2a1fcbf718205314 # main
         with:
           repository: openstack/cinder
           ref: e95a374f4f00ef02d562de81535cad19d1561579 # unmaintained/2023.1
 
-      - uses: vexxhost/docker-atmosphere/.github/actions/build-image@ee412cafe33e0d7d8b3bc7d0ca64c9f155e293c7 # main
+      - uses: vexxhost/docker-atmosphere/.github/actions/build-image@f9beb2976a2cbd2b83f7d49b2a1fcbf718205314 # main
         with:
           image-name: cinder
           build-contexts: cinder=openstack/cinder
