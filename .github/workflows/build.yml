@@ -12,6 +12,18 @@ permissions:
   contents: read
 
 jobs:
+  tox:
+    name: tox (${{ matrix.project.repository }})
+    uses: vexxhost/docker-atmosphere/.github/workflows/tox.yml@0dcf370eb08b3f884992181348b8c41d7f66c10e # main
+    strategy:
+      matrix:
+        project:
+          - repository: openstack/cinder
+            ref: a0fa5b2fe3179e8374c41000fdd354078ba49cc6 # master
+    with:
+      repository: ${{ matrix.project.repository }}
+      ref: ${{ matrix.project.ref }}
+
   image:
     runs-on: ubuntu-latest
     permissions:
