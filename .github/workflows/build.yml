@@ -16,6 +16,7 @@ jobs:
     name: tox (${{ matrix.project.repository }})
     uses: vexxhost/docker-atmosphere/.github/workflows/tox.yml@0dcf370eb08b3f884992181348b8c41d7f66c10e # main
     strategy:
+      fail-fast: false
       matrix:
         project:
           - repository: openstack/cinder
