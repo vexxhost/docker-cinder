@@ -25,12 +25,12 @@ jobs:
         with:
           egress-policy: audit
 
-      - uses: vexxhost/docker-atmosphere/.github/actions/checkout@2b0040e59869e408a94f1e92e67fa47035c50336 # main
+      - uses: vexxhost/docker-atmosphere/.github/actions/checkout@e72a4bb3670421e6ec38413e3e90b11259d86ea1 # main
         with:
           repository: openstack/cinder
           ref: 1fdd593358bf8ff0a8c108dfa1b6f9026ce011b5 # stable/2026.1
 
-      - uses: vexxhost/docker-atmosphere/.github/actions/build-image@2b0040e59869e408a94f1e92e67fa47035c50336 # main
+      - uses: vexxhost/docker-atmosphere/.github/actions/build-image@e72a4bb3670421e6ec38413e3e90b11259d86ea1 # main
         with:
           image-name: cinder
           build-contexts: cinder=openstack/cinder
