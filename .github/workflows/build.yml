@@ -28,7 +28,7 @@ jobs:
       - uses: vexxhost/docker-atmosphere/.github/actions/checkout@5092bcc16ead2c591c2f9a8d003eef0d24b93732 # main
         with:
           repository: openstack/cinder
-          ref: 1fdd593358bf8ff0a8c108dfa1b6f9026ce011b5 # stable/2026.1
+          ref: d884fdaeb78cc9fcd331cc9426844d0ef2d9890e # stable/2026.1
 
       - uses: vexxhost/docker-atmosphere/.github/actions/build-image@5092bcc16ead2c591c2f9a8d003eef0d24b93732 # main
         with:
