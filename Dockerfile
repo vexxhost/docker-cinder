@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 FROM ghcr.io/vexxhost/openstack-venv-builder:2025.2@sha256:5528f59558327af1bfd74b440ddeeb112f5163ba234007e27fab82037da41192 AS build
-RUN --mount=type=bind,from=cinder,source=/,target=/src/cinder,readwrite <<EOF bash -xe
+ARG CINDER_VERSION=27.0.0+a8e.25.8
+RUN <<EOF bash -xe
 uv pip install \
     --constraint /upper-constraints.txt \
-        /src/cinder \
+        "cinder==${CINDER_VERSION}" \
         py-pure-client \
         python-3parclient \
         storpool \
