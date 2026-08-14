@@ -1,0 +1,422 @@
+From c896b7606c2e0f78f40f0a686dec9b896f091f1a Mon Sep 17 00:00:00 2001
+From: Yaguang Tang <heut2008@gmail.com>
+Date: Tue, 12 May 2026 10:58:08 +0800
+Subject: [PATCH] Fix: HPE Nimble driver multipath target portal selection
+
+When nimble_subnet_label matched a specific subnet, _get_data_ips
+returned after the first matching NIC, so only one target portal from
+that subnet was exposed even when additional portal IPs were available.
+The method also only inspected array_list[0], which excluded matching
+portals from additional arrays,which makes the multipath for LUN missing
+available target portal IPs in a multi array HA deployment.
+
+This patch extend subnet label handling so nimble_subnet_label may also
+contain a comma-separated list of labels. The driver now matches every
+configured label across all arrays, preserves wildcard behavior, and
+chooses the first configured matching discovery IP when creating
+provider locations.
+
+Add unit tests covering repeated-label parsing, multiple-label portal
+aggregation, discovery IP selection, and initialize_connection returning
+all target portals for group-scoped targets. Add a reno note covering
+the portal aggregation fix and comma-separated label support.
+
+Closes-bug: #2152223
+Change-Id: I79a9de959ca40dcda545b140867cd5079f48b221
+Signed-off-by: Yaguang Tang <heut2008@gmail.com>
+---
+ .../unit/volume/drivers/hpe/test_nimble.py    | 215 ++++++++++++++++++
+ cinder/volume/drivers/hpe/nimble.py           |  85 ++++---
+ ...subnet-label-portals-b83e13f17f6e51fb.yaml |   8 +
+ 3 files changed, 274 insertions(+), 34 deletions(-)
+ create mode 100644 releasenotes/notes/nimble-multi-subnet-label-portals-b83e13f17f6e51fb.yaml
+
+diff --git a/cinder/tests/unit/volume/drivers/hpe/test_nimble.py b/cinder/tests/unit/volume/drivers/hpe/test_nimble.py
+index 0fba131ae..beff931be 100644
+--- a/cinder/tests/unit/volume/drivers/hpe/test_nimble.py
++++ b/cinder/tests/unit/volume/drivers/hpe/test_nimble.py
+@@ -63,6 +63,59 @@ FAKE_POSITIVE_NETCONFIG_RESPONSE = {
+                                   'name': 'eth3'}]}],
+     'name': 'test-array'}
+ 
++FAKE_MULTI_ARRAY_NETCONFIG_RESPONSE = {
++    'role': 'active',
++    'subnet_list': [{'network': '10.1.1.0',
++                     'discovery_ip': '10.1.1.10',
++                     'type': 'data',
++                     'allow_iscsi': True,
++                     'label': 'data-1',
++                     'allow_group': True,
++                     'vlan_id': 0},
++                    {'network': '10.1.2.0',
++                     'discovery_ip': '10.1.2.10',
++                     'type': 'data',
++                     'allow_iscsi': True,
++                     'label': 'data-2',
++                     'allow_group': True,
++                     'vlan_id': 0}],
++    'array_list': [
++        {'nic_list': [
++            {'subnet_label': 'data-1',
++             'tagged': False,
++             'data_ip': '10.1.1.10',
++             'name': 'eth1a'},
++            {'subnet_label': 'data-1',
++             'tagged': False,
++             'data_ip': '10.1.1.11',
++             'name': 'eth1b'},
++            {'subnet_label': 'data-2',
++             'tagged': False,
++             'data_ip': '10.1.2.10',
++             'name': 'eth3a'},
++            {'subnet_label': 'data-2',
++             'tagged': False,
++             'data_ip': '10.1.2.11',
++             'name': 'eth3b'}]},
++        {'nic_list': [
++            {'subnet_label': 'data-1',
++             'tagged': False,
++             'data_ip': '10.1.1.12',
++             'name': 'eth1a'},
++            {'subnet_label': 'data-1',
++             'tagged': False,
++             'data_ip': '10.1.1.13',
++             'name': 'eth1b'},
++            {'subnet_label': 'data-2',
++             'tagged': False,
++             'data_ip': '10.1.2.12',
++             'name': 'eth3a'},
++            {'subnet_label': 'data-2',
++             'tagged': False,
++             'data_ip': '10.1.2.13',
++             'name': 'eth3b'}]}],
++    'name': 'test-array-multi'}
++
+ FAKE_NEGATIVE_NETCONFIG_RESPONSE = exception.VolumeDriverException(
+     "Session expired")
+ 
+@@ -442,6 +495,32 @@ class NimbleDriverVolumeTestCase(NimbleDriverBaseTestCase):
+             'iSCSI',
+             False)
+ 
++    @mock.patch(NIMBLE_URLLIB2)
++    @mock.patch(NIMBLE_CLIENT)
++    @mock.patch.object(obj_volume.VolumeList, 'get_all_by_host',
++                       mock.Mock(return_value=[]))
++    @mock.patch.object(volume_types, 'get_volume_type_extra_specs',
++                       mock.Mock(type_id=FAKE_TYPE_ID, return_value={
++                                 'nimble:perfpol-name': 'default',
++                                 'nimble:encryption': 'yes'}))
++    @NimbleDriverBaseTestCase.client_mock_decorator(create_configuration(
++        NIMBLE_SAN_LOGIN, NIMBLE_SAN_PASS, NIMBLE_MANAGEMENT_IP,
++        'default', 'data-2, data-1'))
++    def test_create_volume_positive_with_multiple_subnet_labels(self):
++        self.mock_client_service.get_vol_info.return_value = (
++            FAKE_GET_VOL_INFO_RESPONSE)
++        self.mock_client_service.get_netconfig.return_value = (
++            FAKE_MULTI_ARRAY_NETCONFIG_RESPONSE)
++
++        self.assertEqual({
++            'provider_location': '10.1.2.10:3260 iqn.test',
++            'provider_auth': None},
++            self.driver.create_volume({'name': 'testvolume',
++                                       'size': 1,
++                                       'volume_type_id': None,
++                                       'display_name': '',
++                                       'display_description': ''}))
++
+     @mock.patch(NIMBLE_URLLIB2)
+     @mock.patch(NIMBLE_CLIENT)
+     @mock.patch.object(obj_volume.VolumeList, 'get_all_by_host',
+@@ -1518,6 +1597,61 @@ class NimbleDriverConnectionTestCase(NimbleDriverBaseTestCase):
+                  'id': 12},
+                 {'initiator': 'test-initiator1'}))
+ 
++    @mock.patch(NIMBLE_URLLIB2)
++    @mock.patch(NIMBLE_CLIENT)
++    @mock.patch.object(obj_volume.VolumeList, 'get_all_by_host',
++                       mock.Mock(return_value=[]))
++    @NimbleDriverBaseTestCase.client_mock_decorator(create_configuration(
++        'nimble', 'nimble_pass', '10.18.108.55', 'default', 'data-1'))
++    def test_get_data_ips_returns_all_matching_target_portals(self):
++        self.assertEqual(
++            ['10.1.1.10:3260', '10.1.1.11:3260',
++             '10.1.1.12:3260', '10.1.1.13:3260'],
++            self.driver._get_data_ips(FAKE_MULTI_ARRAY_NETCONFIG_RESPONSE))
++
++    @mock.patch(NIMBLE_URLLIB2)
++    @mock.patch(NIMBLE_CLIENT)
++    @mock.patch.object(obj_volume.VolumeList, 'get_all_by_host',
++                       mock.Mock(return_value=[]))
++    @NimbleDriverBaseTestCase.client_mock_decorator(create_configuration(
++        'nimble', 'nimble_pass', '10.18.108.55', 'default',
++        'data-1, data-1'))
++    def test_get_data_ips_deduplicates_repeated_subnet_labels(self):
++        self.assertEqual(
++            ['10.1.1.10:3260', '10.1.1.11:3260',
++             '10.1.1.12:3260', '10.1.1.13:3260'],
++            self.driver._get_data_ips(FAKE_MULTI_ARRAY_NETCONFIG_RESPONSE))
++
++    @mock.patch(NIMBLE_URLLIB2)
++    @mock.patch(NIMBLE_CLIENT)
++    @mock.patch.object(obj_volume.VolumeList, 'get_all_by_host',
++                       mock.Mock(return_value=[]))
++    @NimbleDriverBaseTestCase.client_mock_decorator(create_configuration(
++        'nimble', 'nimble_pass', '10.18.108.55', 'default', '*'))
++    def test_get_data_ips_returns_all_matching_arrays_for_wildcard(self):
++        self.assertEqual(
++            ['10.1.1.10:3260', '10.1.1.11:3260',
++             '10.1.2.10:3260', '10.1.2.11:3260',
++             '10.1.1.12:3260', '10.1.1.13:3260',
++             '10.1.2.12:3260', '10.1.2.13:3260'],
++            self.driver._get_data_ips(FAKE_MULTI_ARRAY_NETCONFIG_RESPONSE))
++
++    @mock.patch(NIMBLE_URLLIB2)
++    @mock.patch(NIMBLE_CLIENT)
++    @mock.patch.object(obj_volume.VolumeList, 'get_all_by_host',
++                       mock.Mock(return_value=[]))
++    @NimbleDriverBaseTestCase.client_mock_decorator(create_configuration(
++        'nimble', 'nimble_pass', '10.18.108.55', 'default',
++        'data-2, data-1'))
++    def test_get_data_ips_returns_all_matching_arrays_for_multiple_labels(
++            self):
++        self.assertEqual(
++            ['10.1.1.10:3260', '10.1.1.11:3260',
++             '10.1.2.10:3260', '10.1.2.11:3260',
++             '10.1.1.12:3260', '10.1.1.13:3260',
++             '10.1.2.12:3260', '10.1.2.13:3260'],
++            self.driver._get_data_ips(FAKE_MULTI_ARRAY_NETCONFIG_RESPONSE))
++
+     @mock.patch(NIMBLE_URLLIB2)
+     @mock.patch(NIMBLE_CLIENT)
+     @mock.patch.object(obj_volume.VolumeList, 'get_all_by_host',
+@@ -1552,6 +1686,87 @@ class NimbleDriverConnectionTestCase(NimbleDriverBaseTestCase):
+                  'id': fake.VOLUME_ID},
+                 {'initiator': 'test-initiator1'}))
+ 
++    @mock.patch(NIMBLE_URLLIB2)
++    @mock.patch(NIMBLE_CLIENT)
++    @mock.patch.object(obj_volume.VolumeList, 'get_all_by_host',
++                       mock.Mock(return_value=[]))
++    @NimbleDriverBaseTestCase.client_mock_decorator(create_configuration(
++        'nimble', 'nimble_pass', '10.18.108.55', 'default', 'data-1'))
++    @mock.patch(NIMBLE_ISCSI_DRIVER + ".get_lun_number")
++    @mock.patch(NIMBLE_ISCSI_DRIVER + '._get_gst_for_group')
++    def test_initialize_connection_group_scoped_target_uses_all_portals(
++            self, mock_gst_name, mock_lun_number):
++        mock_lun_number.return_value = 0
++        mock_gst_name.return_value = 'group_target_name'
++        self.mock_client_service.get_initiator_grp_list.return_value = (
++            FAKE_IGROUP_LIST_RESPONSE)
++        self.mock_client_service.get_netconfig.return_value = (
++            FAKE_MULTI_ARRAY_NETCONFIG_RESPONSE)
++        expected_res = {
++            'driver_volume_type': 'iscsi',
++            'data': {
++                'target_discovered': False,
++                'discard': True,
++                'volume_id': fake.VOLUME_ID,
++                'target_iqns': ['group_target_name', 'group_target_name',
++                                'group_target_name', 'group_target_name'],
++                'target_luns': [0, 0, 0, 0],
++                'target_portals': ['10.1.1.10:3260',
++                                   '10.1.1.11:3260',
++                                   '10.1.1.12:3260',
++                                   '10.1.1.13:3260']}}
++        self.assertEqual(
++            expected_res,
++            self.driver.initialize_connection(
++                {'name': 'test-volume',
++                 'provider_location': '10.1.1.10:3260 group_target_name',
++                 'id': fake.VOLUME_ID},
++                {'initiator': 'test-initiator1'}))
++
++    @mock.patch(NIMBLE_URLLIB2)
++    @mock.patch(NIMBLE_CLIENT)
++    @mock.patch.object(obj_volume.VolumeList, 'get_all_by_host',
++                       mock.Mock(return_value=[]))
++    @NimbleDriverBaseTestCase.client_mock_decorator(create_configuration(
++        'nimble', 'nimble_pass', '10.18.108.55', 'default',
++        'data-2, data-1'))
++    @mock.patch(NIMBLE_ISCSI_DRIVER + ".get_lun_number")
++    @mock.patch(NIMBLE_ISCSI_DRIVER + '._get_gst_for_group')
++    def test_initialize_connection_group_scoped_target_multiple_labels(
++            self, mock_gst_name, mock_lun_number):
++        mock_lun_number.return_value = 0
++        mock_gst_name.return_value = 'group_target_name'
++        self.mock_client_service.get_initiator_grp_list.return_value = (
++            FAKE_IGROUP_LIST_RESPONSE)
++        self.mock_client_service.get_netconfig.return_value = (
++            FAKE_MULTI_ARRAY_NETCONFIG_RESPONSE)
++        expected_res = {
++            'driver_volume_type': 'iscsi',
++            'data': {
++                'target_discovered': False,
++                'discard': True,
++                'volume_id': fake.VOLUME_ID,
++                'target_iqns': ['group_target_name', 'group_target_name',
++                                'group_target_name', 'group_target_name',
++                                'group_target_name', 'group_target_name',
++                                'group_target_name', 'group_target_name'],
++                'target_luns': [0, 0, 0, 0, 0, 0, 0, 0],
++                'target_portals': ['10.1.1.10:3260',
++                                   '10.1.1.11:3260',
++                                   '10.1.2.10:3260',
++                                   '10.1.2.11:3260',
++                                   '10.1.1.12:3260',
++                                   '10.1.1.13:3260',
++                                   '10.1.2.12:3260',
++                                   '10.1.2.13:3260']}}
++        self.assertEqual(
++            expected_res,
++            self.driver.initialize_connection(
++                {'name': 'test-volume',
++                 'provider_location': '10.1.2.10:3260 group_target_name',
++                 'id': fake.VOLUME_ID},
++                {'initiator': 'test-initiator1'}))
++
+     @mock.patch(NIMBLE_URLLIB2)
+     @mock.patch(NIMBLE_CLIENT)
+     @mock.patch.object(obj_volume.VolumeList, 'get_all_by_host',
+diff --git a/cinder/volume/drivers/hpe/nimble.py b/cinder/volume/drivers/hpe/nimble.py
+index f27ddb9d2..9c01304ce 100644
+--- a/cinder/volume/drivers/hpe/nimble.py
++++ b/cinder/volume/drivers/hpe/nimble.py
+@@ -89,7 +89,7 @@ nimble_opts = [
+                help='Nimble Controller pool name'),
+     cfg.StrOpt('nimble_subnet_label',
+                default='*',
+-               help='Nimble Subnet Label'),
++               help='Nimble subnet label, or comma-separated subnet labels'),
+     cfg.BoolOpt('nimble_verify_certificate',
+                 default=False,
+                 help='Whether to verify Nimble SSL Certificate'),
+@@ -1286,33 +1286,44 @@ class NimbleISCSIDriver(NimbleBaseVolumeDriver, san.SanISCSIDriver):
+                  {'name': volume_name, 'loc': provider_location})
+         return provider_location
+ 
++    def _get_configured_subnet_labels(self):
++        subnet_label = self.configuration.nimble_subnet_label or '*'
++        configured_labels = [label.strip() for label in subnet_label.split(',')
++                             if label.strip()]
++        if not configured_labels:
++            configured_labels = ['*']
++        return list(dict.fromkeys(configured_labels))
++
+     def _get_data_ips(self, netconfig):
+         """Get data ips."""
+-        subnet_label = self.configuration.nimble_subnet_label
++        subnet_labels = self._get_configured_subnet_labels()
++        use_all_subnets = '*' in subnet_labels
+         LOG.debug('subnet_label used %(netlabel)s, netconfig %(netconf)s',
+-                  {'netlabel': subnet_label, 'netconf': netconfig})
++                  {'netlabel': subnet_labels, 'netconf': netconfig})
+         ret_data_ips = []
+-        for subnet in netconfig['array_list'][0]['nic_list']:
+-            LOG.info('Exploring array subnet label %s', subnet[
+-                'subnet_label'])
+-            if subnet['data_ip']:
+-                if subnet_label == '*':
+-                    # if all subnets are mentioned then return all portals
+-                    # else just return specific subnet
+-                    LOG.info('Data ip %(data_ip)s is used '
+-                             'on data subnet %(net_label)s',
+-                             {'data_ip': subnet['data_ip'],
+-                              'net_label': subnet['subnet_label']})
+-                    ret_data_ips.append(str(subnet['data_ip']) + ':3260')
+-                elif subnet_label == subnet['subnet_label']:
+-                    LOG.info('Data ip %(data_ip)s is used'
+-                             ' on subnet %(net_label)s',
+-                             {'data_ip': subnet['data_ip'],
+-                              'net_label': subnet['subnet_label']})
+-                    data_ips_single_subnet = []
+-                    data_ips_single_subnet.append(str(subnet['data_ip']) +
+-                                                  ':3260')
+-                    return data_ips_single_subnet
++        for array in netconfig['array_list']:
++            for subnet in array['nic_list']:
++                LOG.info('Exploring array subnet label %s', subnet[
++                    'subnet_label'])
++                if subnet['data_ip']:
++                    if use_all_subnets:
++                        # if all subnets are mentioned then return all portals
++                        # else just return specific subnet
++                        LOG.info('Data ip %(data_ip)s is used '
++                                 'on data subnet %(net_label)s',
++                                 {'data_ip': subnet['data_ip'],
++                                  'net_label': subnet['subnet_label']})
++                        data_ip = str(subnet['data_ip']) + ':3260'
++                        if data_ip not in ret_data_ips:
++                            ret_data_ips.append(data_ip)
++                    elif subnet['subnet_label'] in subnet_labels:
++                        LOG.info('Data ip %(data_ip)s is used'
++                                 ' on subnet %(net_label)s',
++                                 {'data_ip': subnet['data_ip'],
++                                  'net_label': subnet['subnet_label']})
++                        data_ip = str(subnet['data_ip']) + ':3260'
++                        if data_ip not in ret_data_ips:
++                            ret_data_ips.append(data_ip)
+         if ret_data_ips:
+             LOG.info('Data ips %s', ret_data_ips)
+             return ret_data_ips
+@@ -1321,13 +1332,15 @@ class NimbleISCSIDriver(NimbleBaseVolumeDriver, san.SanISCSIDriver):
+ 
+     def _get_discovery_ip(self, netconfig):
+         """Get discovery ip."""
+-        subnet_label = self.configuration.nimble_subnet_label
++        subnet_labels = self._get_configured_subnet_labels()
++        use_all_subnets = '*' in subnet_labels
+         LOG.debug('subnet_label used %(netlabel)s, netconfig %(netconf)s',
+-                  {'netlabel': subnet_label, 'netconf': netconfig})
++                  {'netlabel': subnet_labels, 'netconf': netconfig})
+         ret_discovery_ip = ''
++        matching_discovery_ips = {}
+         for subnet in netconfig['subnet_list']:
+             LOG.info('Exploring array subnet label %s', subnet['label'])
+-            if subnet_label == '*':
++            if use_all_subnets:
+                 # Use the first data subnet, save mgmt+data for later
+                 if subnet['type'] == SM_SUBNET_DATA:
+                     LOG.info('Discovery ip %(disc_ip)s is used '
+@@ -1341,13 +1354,17 @@ class NimbleISCSIDriver(NimbleBaseVolumeDriver, san.SanISCSIDriver):
+                              {'disc_ip': subnet['discovery_ip'],
+                               'net_label': subnet['label']})
+                     ret_discovery_ip = subnet['discovery_ip']
+-            # If subnet is specified and found, use the subnet
+-            elif subnet_label == subnet['label']:
+-                LOG.info('Discovery ip %(disc_ip)s is used'
+-                         ' on subnet %(net_label)s',
+-                         {'disc_ip': subnet['discovery_ip'],
+-                          'net_label': subnet['label']})
+-                return subnet['discovery_ip']
++            elif subnet['label'] in subnet_labels:
++                matching_discovery_ips[subnet['label']] = (
++                    subnet['discovery_ip'])
++        if matching_discovery_ips:
++            for subnet_label in subnet_labels:
++                if subnet_label in matching_discovery_ips:
++                    LOG.info('Discovery ip %(disc_ip)s is used'
++                             ' on subnet %(net_label)s',
++                             {'disc_ip': matching_discovery_ips[subnet_label],
++                              'net_label': subnet_label})
++                    return matching_discovery_ips[subnet_label]
+         if ret_discovery_ip:
+             LOG.info('Discovery ip %s is used on mgmt+data subnet',
+                      ret_discovery_ip)
+diff --git a/releasenotes/notes/nimble-multi-subnet-label-portals-b83e13f17f6e51fb.yaml b/releasenotes/notes/nimble-multi-subnet-label-portals-b83e13f17f6e51fb.yaml
+new file mode 100644
+index 000000000..91440fb12
+--- /dev/null
++++ b/releasenotes/notes/nimble-multi-subnet-label-portals-b83e13f17f6e51fb.yaml
+@@ -0,0 +1,8 @@
++---
++fixes:
++  - |
++    HPE Nimble iSCSI group-scoped target connections now return every matching
++    target portal across all arrays when ``nimble_subnet_label`` is set. The
++    driver also accepts comma-separated subnet labels and includes portal IPs
++    from every matching data subnet while preserving single-label and wildcard
++    behavior.
+-- 
+2.53.0
+
