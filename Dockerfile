@@ -1,11 +1,12 @@
 # SPDX-FileCopyrightText: © 2025 VEXXHOST, Inc.
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-FROM ghcr.io/vexxhost/openstack-venv-builder:2026.1@sha256:0d814b5e8fbeb107f44d0597672084acee1fb90f6e0bf3720d5e27453e92ed15 AS build
-RUN --mount=type=bind,from=cinder,source=/,target=/src/cinder,readwrite <<EOF bash -xe
+FROM ghcr.io/vexxhost/openstack-venv-builder:2026.1@sha256:3b9cdc9a179ade1803b251b3b0f15e029cb27dfb0f7e8208f950f3552dbae445 AS build
+ARG CINDER_VERSION=28.0.0+a8e.7.9
+RUN <<EOF bash -xe
 uv pip install \
     --constraint /upper-constraints.txt \
-        /src/cinder \
+        "cinder==${CINDER_VERSION}" \
         py-pure-client \
         python-3parclient \
         storpool \
