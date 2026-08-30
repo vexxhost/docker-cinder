@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 FROM ghcr.io/vexxhost/openstack-venv-builder:2025.2@sha256:58c59166bf4149f1d959aadc84e07fdb737bdb99c86e69dfa5c19dcdec7c7555 AS build
-ARG CINDER_VERSION=27.0.0+a8e.25.8
+ARG CINDER_VERSION=27.0.0+a8e.25.9
 RUN <<EOF bash -xe
 uv pip install \
     --constraint /upper-constraints.txt \
