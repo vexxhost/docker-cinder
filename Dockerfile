@@ -10,7 +10,8 @@ uv pip install \
         py-pure-client \
         python-3parclient \
         storpool \
-        storpool.spopenstack
+        storpool.spopenstack \
+        "tooz[redis]"
 EOF
 ADD --chmod=644 \
     https://github.com/storpool/storpool-openstack-integration/raw/master/drivers/cinder/openstack/caracal/storpool.py \
