@@ -4,6 +4,8 @@
 FROM ghcr.io/vexxhost/openstack-venv-builder:2023.2@sha256:ad548f3bc3da9c6136f33943267aca39d77e7f6364b47cca9efc748f5b4be634 AS build
 ARG CINDER_VERSION=23.5.0+a8e.0.10
 RUN <<EOF bash -xe
+# Fetch the release-pinned pbr from PyPI; the downstream index shadows it.
+UV_INDEX=https://pypi.org/simple/ uv pip install --constraint /upper-constraints.txt pbr
 uv pip install \
     --constraint /upper-constraints.txt \
         "cinder==${CINDER_VERSION}" \
