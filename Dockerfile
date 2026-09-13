@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 FROM ghcr.io/vexxhost/openstack-venv-builder:2025.1@sha256:22950e3d51514a8a715a91904426aab189375f9f04fd723a8626991d6d5d6bdb AS build
-ARG CINDER_VERSION=26.3.0+a8e.0.8
+ARG CINDER_VERSION=26.3.0+a8e.2.9
 RUN <<EOF bash -xe
+# Fetch the release-pinned pbr from PyPI; the downstream index shadows it.
+UV_INDEX=https://pypi.org/simple/ uv pip install --constraint /upper-constraints.txt pbr
 uv pip install \
     --constraint /upper-constraints.txt \
         "cinder==${CINDER_VERSION}" \
