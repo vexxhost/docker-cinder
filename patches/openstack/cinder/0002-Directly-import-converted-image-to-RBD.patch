@@ -18,6 +18,29 @@ Change-Id: Ib5e15eeee6a02e2833d14ac34f6fdeb4a6548a67
  3 files changed, 34 insertions(+), 34 deletions(-)
  create mode 100644 releasenotes/notes/allow-direct-import-converted-encrypt-image-005986a59d1027e1.yaml
 
+diff --git a/cinder/tests/unit/volume/drivers/test_rbd.py b/cinder/tests/unit/volume/drivers/test_rbd.py
+index cf768df06..9e8cbbca1 100644
+--- a/cinder/tests/unit/volume/drivers/test_rbd.py
++++ b/cinder/tests/unit/volume/drivers/test_rbd.py
+@@ -1943,6 +1943,5 @@ class RBDTestCase(test.TestCase):
+-    @mock.patch('cinder.volume.drivers.rbd.fileutils.delete_if_exists')
+     @mock.patch('cinder.image.image_utils.convert_image')
+-    def _copy_image_encrypted(self, mock_convert, mock_temp_delete):
++    def _copy_image_encrypted(self, mock_convert):
+         key_mgr = fake_keymgr.fake_api()
+         self.mock_object(castellan.key_manager, 'API', return_value=key_mgr)
+         key_id = key_mgr.store(self.context, KeyObject())
+@@ -1967,9 +1966,7 @@ class RBDTestCase(test.TestCase):
+         mock_image_service = mock.MagicMock()
+         args = [self.context, self.volume_a, mock_image_service, None]
+         self.driver.copy_image_to_encrypted_volume(*args)
+-        mock_temp_delete.assert_called()
+-        self.assertEqual(1, mock_temp_delete.call_count)
+-
++
+     @common_mocks
+     def test_copy_image_no_volume_tmp(self):
+         self.cfg.image_conversion_dir = None
 diff --git a/cinder/volume/drivers/rbd.py b/cinder/volume/drivers/rbd.py
 index 13f67b3d4..291db326d 100644
 --- a/cinder/volume/drivers/rbd.py
