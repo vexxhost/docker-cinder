@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: © 2025 VEXXHOST, Inc.
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-FROM ghcr.io/vexxhost/openstack-venv-builder:2024.1@sha256:087f96326c4dbee785906f56d15ce4cbdd8d523d3a2aeca2b4884f012dc13d56 AS build
+FROM ghcr.io/vexxhost/openstack-venv-builder:2024.1@sha256:3d115319cd320bf1f4928d0fb0999d59a8554df58140adf1859826f58085e9c4 AS build
 ARG CINDER_VERSION=24.5.0+a8e.5.7
 RUN <<EOF bash -xe
 uv pip install \
