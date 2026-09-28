@@ -16,7 +16,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
       packages: write
       pull-requests: write
     steps:
@@ -30,8 +29,48 @@ jobs:
           repository: openstack/cinder
           ref: 4823af721c5855a56cf9fb6df3b496883e7a0258 # master
 
-      - uses: vexxhost/docker-atmosphere/.github/actions/build-image@d048c9245c93c10c06d42d1ea9311fcd3d416530 # main
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
-          image-name: cinder
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/cinder
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=
+            type=ref,event=branch
+            type=match,pattern=stable/(.*),group=1,value={{branch}}
+            type=ref,event=pr
+
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        id: build
+        with:
+          context: .
           build-contexts: cinder=openstack/cinder
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - uses: ubie-oss/comment-to-merged-pr-action@947981079c7889504e28088fb38649bc5218e28d # v0.4.0
+        if: github.event_name != 'pull_request'
+        with:
+          github-token: ${{ github.token }}
+          message: |-
+            This pull request has been included in the following image tags:
+
+            ```
+            ${{ steps.meta.outputs.tags }}
+            ```
+
+            **Digest:** `ghcr.io/${{ github.repository_owner }}/cinder@${{ steps.build.outputs.digest }}`
