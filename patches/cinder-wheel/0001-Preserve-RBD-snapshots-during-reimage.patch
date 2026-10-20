@@ -1,0 +1,237 @@
+From: Rico Lin <rlin@vexxhost.com>
+Subject: [PATCH] RBD: Preserve snapshots during volume reimage
+
+Adapt upstream change 995924 to the installed Cinder 28.0.0+a8e.7.10
+wheel, preserving its direct-to-RBD creation paths. Reimage downloads
+to a temporary file and overwrites the existing RBD image with
+qemu-img convert -n -S 0 so its snapshots survive.
+
+Based on the fix by Amit Uniyal <auniyal@redhat.com>.
+Upstream-Commit: 3d04f146df28570e58a9a7f405196432a11b2db3
+Upstream-Review: https://review.opendev.org/c/openstack/cinder/+/995924
+Closes-Bug: #2160473
+Signed-off-by: Rico Lin <rlin@vexxhost.com>
+Assisted-By: Codex <noreply@openai.com>
+---
+
+diff --git a/cinder/image/image_utils.py b/cinder/image/image_utils.py
+index a06e1a7..c83a2c2 100644
+--- a/cinder/image/image_utils.py
++++ b/cinder/image/image_utils.py
+@@ -346,7 +346,8 @@ def _get_qemu_convert_cmd(src: str,
+                           compress: bool = False,
+                           src_passphrase_file: Optional[str] = None,
+                           disable_sparse: bool = False,
+-                          cluster_size: Optional[int] = None) -> list[str]:
++                          cluster_size: Optional[int] = None,
++                          skip_create: bool = False) -> list[str]:
+     if src_passphrase_file is not None:
+         if passphrase_file is None:
+             message = _("Can't create unencrypted volume %(format)s "
+@@ -377,6 +378,9 @@ def _get_qemu_convert_cmd(src: str,
+     if prefix:
+         cmd = list(prefix) + cmd
+
++    if skip_create:
++        cmd += ('-n',)
++
+     if cache_mode:
+         cmd += ('-t', cache_mode)
+
+@@ -464,7 +468,8 @@ def _convert_image(
+         src_passphrase_file: Optional[str] = None,
+         disable_sparse: bool = False,
+         src_img_info: Optional[imageutils.QemuImgInfo] = None,
+-        cluster_size: Optional[int] = None) -> None:
++        cluster_size: Optional[int] = None,
++        skip_create: bool = False) -> None:
+     """Convert image to other format.
+
+     NOTE: If the qemu-img convert command fails and this function raises an
+@@ -486,6 +491,7 @@ def _convert_image(
+     :param src_img_info: a imageutils.QemuImgInfo object from this image,
+                             or None
+     :param cluster_size: cluster size of the luks image format
++    :param skip_create: overwrite an existing destination without recreating it
+     """
+
+     # Check whether O_DIRECT is supported and set '-t none' if it is
+@@ -518,7 +524,8 @@ def _convert_image(
+                                 compress=compress,
+                                 src_passphrase_file=src_passphrase_file,
+                                 disable_sparse=disable_sparse,
+-                                cluster_size=cluster_size)
++                                cluster_size=cluster_size,
++                                skip_create=skip_create)
+
+     _ensure_exists(dest)
+
+@@ -600,7 +607,8 @@ def convert_image(source: str,
+                   image_id: Optional[str] = None,
+                   data: Optional[imageutils.QemuImgInfo] = None,
+                   disable_sparse: bool = False,
+-                  cluster_size: Optional[int] = None) -> None:
++                  cluster_size: Optional[int] = None,
++                  skip_create: bool = False) -> None:
+     """Convert image to other format.
+
+     NOTE: If the qemu-img convert command fails and this function raises an
+@@ -623,6 +631,7 @@ def convert_image(source: str,
+     :param cluster_size: cluster size of the luks image format
+     :param image_id: the image ID if this is a Glance image, or None
+     :param data: a imageutils.QemuImgInfo object from this image, or None
++    :param skip_create: overwrite an existing destination without recreating it
+     :raises ImageUnacceptable: when the image fails some format checks
+     :raises ProcessExecutionError: when something goes wrong during conversion
+     """
+@@ -643,7 +652,8 @@ def convert_image(source: str,
+                        src_passphrase_file=src_passphrase_file,
+                        disable_sparse=disable_sparse,
+                        src_img_info=data,
+-                       cluster_size=cluster_size
++                       cluster_size=cluster_size,
++                       skip_create=skip_create
+                        )
+
+
+diff --git a/cinder/volume/drivers/rbd.py b/cinder/volume/drivers/rbd.py
+index cd5e1bf..227dcc2 100644
+--- a/cinder/volume/drivers/rbd.py
++++ b/cinder/volume/drivers/rbd.py
+@@ -2265,7 +2265,9 @@ class RBDDriver(driver.CloneableImageVD, driver.MigrateVD,
+
+         with self._image_conversion_semaphore:
+             with tempfile.NamedTemporaryFile(dir=tmp_dir) as tmp:
+-                _delete_volume(volume)
++                # Reimage must preserve the RBD image and its snapshots.
++                if not disable_sparse:
++                    _delete_volume(volume)
+                 blocksize = self.configuration.volume_dd_blocksize
+                 try:
+                     image_utils.fetch_to_raw(
+@@ -2273,7 +2275,7 @@ class RBDDriver(driver.CloneableImageVD, driver.MigrateVD,
+                         tmp.name, blocksize,
+                         size=volume.size,
+                         disable_sparse=disable_sparse,
+-                        direct_dest=(None if encrypted
++                        direct_dest=(None if encrypted or disable_sparse
+                                      else direct_dest))
+                 except processutils.ProcessExecutionError as e:
+                     if self._looks_like_eperm(e):
+@@ -2286,7 +2288,14 @@ class RBDDriver(driver.CloneableImageVD, driver.MigrateVD,
+                                 data='%s  Hint: %s' % (e, hint))
+                     raise
+
+-                if encrypted:
++                if disable_sparse:
++                    if encrypted:
++                        self._encrypt_image(context, volume, tmp_dir, tmp.name)
++                    image_utils.convert_image(
++                        tmp.name, direct_dest, 'raw', run_as_root=True,
++                        src_format='raw', disable_sparse=True,
++                        skip_create=True)
++                elif encrypted:
+                     # Encrypt the fetched raw image and stream it directly to
+                     # RBD via qemu-img, avoiding an intermediate .luks
+                     # tempfile write plus a separate `rbd import`.
+diff --git a/cinder/tests/unit/test_image_utils.py b/cinder/tests/unit/test_image_utils.py
+index 4e2fd7a..1e1afc3 100644
+--- a/cinder/tests/unit/test_image_utils.py
++++ b/cinder/tests/unit/test_image_utils.py
+@@ -236,6 +236,22 @@ class TestQemuImgInfo(test.TestCase):
+
+ @ddt.ddt
+ class TestConvertImage(test.TestCase):
++    @ddt.data(False, True)
++    @mock.patch('cinder.image.image_utils.check_image_format')
++    @mock.patch('cinder.image.image_utils.qemu_img_info')
++    @mock.patch('cinder.utils.execute')
++    @mock.patch('cinder.utils.is_blk_device', return_value=False)
++    def test_convert_existing_volume(self, skip_create, mock_isblk,
++                                     mock_exec, mock_info, mock_check):
++        image_utils.convert_image(
++            '/tmp/source', 'rbd:volumes/existing', 'raw', src_format='raw',
++            disable_sparse=True, skip_create=skip_create)
++
++        cmd = mock_exec.call_args.args
++        self.assertEqual(skip_create, '-n' in cmd)
++        self.assertEqual('0', cmd[cmd.index('-S') + 1])
++        self.assertIn('rbd_cache=false', cmd[-1])
++
+     @mock.patch('cinder.image.image_utils._ensure_exists',
+                 new=mock.MagicMock())
+     @mock.patch('cinder.image.image_utils.qemu_img_info')
+diff --git a/cinder/tests/unit/volume/drivers/test_rbd.py b/cinder/tests/unit/volume/drivers/test_rbd.py
+index fca34a3..7a0ae82 100644
+--- a/cinder/tests/unit/volume/drivers/test_rbd.py
++++ b/cinder/tests/unit/volume/drivers/test_rbd.py
+@@ -2089,6 +2089,69 @@ class RBDTestCase(test.TestCase):
+                     self.driver._is_cloneable(location, {'disk_format': f}))
+             self.assertTrue(mock_get_fsid.called)
+
++    @ddt.data(False, True)
++    @common_mocks
++    def test_reimage_preserves_existing_volume(self, encrypted):
++        self.mock_object(
++            self.driver, '_get_config_tuple',
++            return_value=('ceph', self.cfg.rbd_ceph_conf,
++                          self.cfg.rbd_user, None))
++        mock_tmp = self.mock_object(tempfile, 'NamedTemporaryFile')
++        tmp_name = mock_tmp.return_value.__enter__.return_value.name
++        mock_fetch = self.mock_object(image_utils, 'fetch_to_raw')
++        mock_convert = self.mock_object(image_utils, 'convert_image')
++        mock_delete = self.mock_object(self.driver, 'delete_volume')
++        mock_encrypt = self.mock_object(self.driver, '_encrypt_image')
++        mock_upload = self.mock_object(self.driver, '_encrypt_image_and_upload')
++        self.mock_object(self.driver, '_resize')
++        self.mock_object(self.driver, '_setup_volume')
++        image_service = mock.sentinel.image_service
++
++        copy_image = (self.driver.copy_image_to_encrypted_volume if encrypted
++                      else self.driver.copy_image_to_volume)
++        copy_image(self.context, self.volume_a, image_service, fake.IMAGE_ID,
++                   disable_sparse=True)
++
++        mock_delete.assert_not_called()
++        mock_upload.assert_not_called()
++        mock_fetch.assert_called_once_with(
++            self.context, image_service, fake.IMAGE_ID, tmp_name,
++            self.cfg.volume_dd_blocksize, size=self.volume_a.size,
++            disable_sparse=True, direct_dest=None)
++        if encrypted:
++            mock_encrypt.assert_called_once_with(
++                self.context, self.volume_a, mock_tmp.call_args.kwargs['dir'],
++                tmp_name)
++        else:
++            mock_encrypt.assert_not_called()
++        dest = (f'rbd:{self.cfg.rbd_pool}/{self.volume_a.name}'
++                f':id={self.cfg.rbd_user}:conf={self.cfg.rbd_ceph_conf}')
++        mock_convert.assert_called_once_with(
++            tmp_name, dest, 'raw', run_as_root=True, src_format='raw',
++            disable_sparse=True, skip_create=True)
++
++    @ddt.data('fetch', 'convert')
++    @common_mocks
++    def test_failed_reimage_keeps_existing_volume(self, failure):
++        self.mock_object(tempfile, 'NamedTemporaryFile')
++        mock_fetch = self.mock_object(image_utils, 'fetch_to_raw')
++        mock_convert = self.mock_object(image_utils, 'convert_image')
++        mock_delete = self.mock_object(self.driver, 'delete_volume')
++        mock_resize = self.mock_object(self.driver, '_resize')
++        error = processutils.ProcessExecutionError(stderr='reimage failed')
++        if failure == 'fetch':
++            mock_fetch.side_effect = error
++        else:
++            mock_convert.side_effect = error
++
++        self.assertRaises(
++            processutils.ProcessExecutionError,
++            self.driver.copy_image_to_volume, self.context, self.volume_a,
++            mock.sentinel.image_service, fake.IMAGE_ID, disable_sparse=True)
++
++        mock_delete.assert_not_called()
++        mock_resize.assert_not_called()
++
+     def _copy_image(self, volume_busy=False):
+         self.mock_object(tempfile, 'NamedTemporaryFile')
+         self.mock_object(os.path, 'exists', return_value=True)
