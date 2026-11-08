@@ -3,7 +3,7 @@
 
 FROM ghcr.io/vexxhost/openstack-venv-builder:main@sha256:e8f8208d29a827f4f209909f7df22ea3995e74fd138c3b5d8ef90534d902b78e AS build
 ARG CINDER_VERSION=28.0.0+a8e.7.10
-RUN <<EOF bash -xe
+RUN --mount=type=bind,source=patches/cinder-wheel,target=/cinder-patches <<EOF bash -xe
 uv pip install \
     --constraint /upper-constraints.txt \
         "cinder==${CINDER_VERSION}" \
@@ -11,6 +11,8 @@ uv pip install \
         python-3parclient \
         storpool \
         storpool.spopenstack
+git -C /var/lib/openstack/lib/python3.12/site-packages apply \
+    /cinder-patches/*.patch
 EOF
 ADD --chmod=644 \
     https://github.com/storpool/storpool-openstack-integration/raw/master/drivers/cinder/openstack/caracal/storpool.py \
