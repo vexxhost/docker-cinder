@@ -46,7 +46,7 @@ index f1ffeb89e..cf768df06 100644
 +                '12288M')
  
      @mock.patch('cinder.objects.Volume.get_by_id')
-     @mock.patch('cinder.db.volume_glance_metadata_get', return_value={})
+     @mock.patch('cinder.db.api.volume_glance_metadata_get', return_value={})
 diff --git a/cinder/volume/drivers/rbd.py b/cinder/volume/drivers/rbd.py
 index 1f4dac8d9..aace801f3 100644
 --- a/cinder/volume/drivers/rbd.py
